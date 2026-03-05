@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "EduGuide"
 
     # ── PostgreSQL ──────────────────────────────────────────────────────────
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:chery%40NG1@localhost:5432/eduguide1_db"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:chery%40NG1@localhost:5432/edu"
     
     # ── Redis ───────────────────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"
