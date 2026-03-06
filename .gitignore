@@ -5,4 +5,5 @@ package-lock.json
 
 
 FRONTEND/package-lock.json
-
+a_venv 
+.env
