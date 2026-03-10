@@ -38,7 +38,8 @@ export const universityService = {
 
 export const advisorService = {
   chat:               (message, context, conversation_id) =>
-                        api.post('/advisor/chat', { message, context, conversation_id }),
+                        api.post('/advisor/chat', { message, context: "admission" }),
+                        //api.post('/advisor/chat', { message, context, conversation_id }),
   analyzePerformance: (attempt_id)  => api.post(`/advisor/analyze/${attempt_id}`),
   getHistory:         ()            => api.get('/advisor/history'),
   getConversation:    (id)          => api.get(`/advisor/history/${id}`),
