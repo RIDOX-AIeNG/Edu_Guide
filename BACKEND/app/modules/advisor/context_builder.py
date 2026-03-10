@@ -1,40 +1,43 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Optional
 
-from app.modules.auth.model     import User
-from app.modules.exams.model    import ExamAttempt
-from app.shared.enums            import AttemptStatus
-from app.shared.grading          import get_waec_grade
+from app.modules.auth.model import User
+from app.modules.exams.model import ExamAttempt
+from app.shared.enums import AttemptStatus
+from app.shared.grading import get_waec_grade
 
 
 async def build_student_context(user_id: int, db: AsyncSession) -> dict:
-    from app.modules.auth.model       import User
-    from app.modules.exams.model      import ExamAttempt
-    from app.modules.practice.model   import PracticeSession
-    from app.modules.question.model  import Subject
-    from app.shared.grading            import get_waec_grade
-    from app.shared.enums              import AttemptStatus
+    from app.modules.auth.model import User
+    from app.modules.exams.model import ExamAttempt
+    from app.modules.practice.model import PracticeSession
+    from app.modules.question.model import Subject
+    from app.shared.grading import get_waec_grade
+    from app.shared.enums import AttemptStatus
     from app.modules.universities.model import University, Course
+    from collections import Counter
 
     user = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
     if not user:
         return {}
 
     ctx: dict = {
-        "student_name":     user.full_name,
-        "class_level":      user.class_level if user.class_level else "Unknown",
-        "journey_stage":    user.journey_stage if user.journey_stage else "onboarding",
+        "student_name": user.full_name,
+        "class_level": user.class_level if user.class_level else "Unknown",
+        "journey_stage": user.journey_stage if user.journey_stage else "onboarding",
         "career_interests": user.career_interests or "Not specified",
     }
 
-    waec_attempts = (await db.execute(
-        select(ExamAttempt).where(
-            ExamAttempt.student_id == user_id,
-            ExamAttempt.exam_type  == "waec",
-            ExamAttempt.status     == AttemptStatus.completed.value,
+    waec_attempts = (
+        await db.execute(
+            select(ExamAttempt).where(
+                ExamAttempt.student_id == user_id,
+                ExamAttempt.exam_type == "waec",
+                ExamAttempt.status == AttemptStatus.completed.value,
+            )
         )
-    )).scalars().all()
+    ).scalars().all()
+
     best_waec: dict = {}
     for a in waec_attempts:
         sid = a.subject_id
@@ -42,100 +45,118 @@ async def build_student_context(user_id: int, db: AsyncSession) -> dict:
             subj = (await db.execute(select(Subject).where(Subject.id == sid))).scalars().first()
             best_waec[sid] = {
                 "subject": subj.name if subj else f"Subject {sid}",
-                "pct":     round(a.percentage or 0, 1),
-                "grade":   get_waec_grade(a.percentage or 0),
+                "pct": round(a.percentage or 0, 1),
+                "grade": get_waec_grade(a.percentage or 0),
             }
-    ctx["waec_results"]      = list(best_waec.values())
-    ctx["waec_credits"]      = sum(1 for v in best_waec.values() if v["grade"] in ('A1','B2','B3','C4','C5','C6'))
-    ctx["waec_total_taken"]  = len(waec_attempts)
 
-   
-    jamb_attempts = (await db.execute(
-        select(ExamAttempt).where(
-            ExamAttempt.student_id == user_id,
-            ExamAttempt.exam_type  == "jamb",
-            ExamAttempt.status     == AttemptStatus.completed.value,
-        ).order_by(ExamAttempt.score.desc())
-    )).scalars().all()
-    
-    ctx["jamb_attempts"]  = len(jamb_attempts)
-    ctx["jamb_best"]      = jamb_attempts[0].score if jamb_attempts else None
-    ctx["jamb_passed"]    = jamb_attempts[0].passed if jamb_attempts else False
+    ctx["waec_results"] = list(best_waec.values())
+    ctx["waec_credits"] = sum(
+        1 for v in best_waec.values() if v["grade"] in ("A1", "B2", "B3", "C4", "C5", "C6")
+    )
+    ctx["waec_total_taken"] = len(waec_attempts)
+
+    jamb_attempts = (
+        await db.execute(
+            select(ExamAttempt).where(
+                ExamAttempt.student_id == user_id,
+                ExamAttempt.exam_type == "jamb",
+                ExamAttempt.status == AttemptStatus.completed.value,
+            ).order_by(ExamAttempt.score.desc())
+        )
+    ).scalars().all()
+
+    ctx["jamb_attempts"] = len(jamb_attempts)
+    ctx["jamb_best"] = jamb_attempts[0].score if jamb_attempts else None
+    ctx["jamb_passed"] = jamb_attempts[0].passed if jamb_attempts else False
     ctx["jamb_weak_topics"] = jamb_attempts[0].weak_topics if jamb_attempts else []
 
-   
-    practice_sessions = (await db.execute(
-        select(PracticeSession).where(
-            PracticeSession.student_id == user_id,
-            PracticeSession.status     == "completed",
-        ).order_by(PracticeSession.started_at.desc())
-    )).scalars().all()
+    practice_sessions = (
+        await db.execute(
+            select(PracticeSession).where(
+                PracticeSession.student_id == user_id,
+                PracticeSession.status == "completed",
+            ).order_by(PracticeSession.started_at.desc())
+        )
+    ).scalars().all()
 
     ctx["practice_sessions_total"] = len(practice_sessions)
-    ctx["practice_avg_score"]      = (
+    ctx["practice_avg_score"] = (
         round(sum(s.percentage or 0 for s in practice_sessions) / len(practice_sessions), 1)
-        if practice_sessions else None
+        if practice_sessions
+        else None
     )
-
 
     practice_by_subject: dict = {}
     for ps in practice_sessions:
         sid = ps.subject_id
         if not sid:
             continue
+
         if sid not in practice_by_subject:
             subj = (await db.execute(select(Subject).where(Subject.id == sid))).scalars().first()
             practice_by_subject[sid] = {
                 "subject": subj.name if subj else f"Subject {sid}",
-                "sessions": 0, "scores": []
+                "sessions": 0,
+                "scores": [],
             }
+
         practice_by_subject[sid]["sessions"] += 1
         if ps.percentage is not None:
             practice_by_subject[sid]["scores"].append(ps.percentage)
 
     ctx["practice_by_subject"] = [
         {
-            "subject":    v["subject"],
-            "sessions":   v["sessions"],
-            "avg_score":  round(sum(v["scores"]) / len(v["scores"]), 1) if v["scores"] else None,
+            "subject": v["subject"],
+            "sessions": v["sessions"],
+            "avg_score": round(sum(v["scores"]) / len(v["scores"]), 1) if v["scores"] else None,
         }
         for v in practice_by_subject.values()
     ]
 
-    
-    all_exams = (await db.execute(
-        select(ExamAttempt).where(
-            ExamAttempt.student_id == user_id,
-            ExamAttempt.status     == AttemptStatus.completed.value,
-        ).order_by(ExamAttempt.started_at.desc()).limit(5)
-    )).scalars().all()
+    all_exams = (
+        await db.execute(
+            select(ExamAttempt).where(
+                ExamAttempt.student_id == user_id,
+                ExamAttempt.status == AttemptStatus.completed.value,
+            ).order_by(ExamAttempt.started_at.desc()).limit(5)
+        )
+    ).scalars().all()
 
     all_weak = []
     for a in all_exams:
         if a.weak_topics:
             all_weak.extend(a.weak_topics)
-   
-    from collections import Counter
-    weak_counts    = Counter(all_weak)
+
+    weak_counts = Counter(all_weak)
     ctx["top_weak_topics"] = [t for t, _ in weak_counts.most_common(8)]
 
     ctx["selected_university"] = None
-    ctx["selected_course"]     = None
+    ctx["selected_course"] = None
+
     if user.selected_university_id:
-        uni = (await db.execute(select(University).where(University.id == user.selected_university_id))).scalars().first()
+        uni = (
+            await db.execute(
+                select(University).where(University.id == user.selected_university_id)
+            )
+        ).scalars().first()
         ctx["selected_university"] = uni.name if uni else None
+
     if user.selected_course_id:
-        crs = (await db.execute(select(Course).where(Course.id == user.selected_course_id))).scalars().first()
+        crs = (
+            await db.execute(
+                select(Course).where(Course.id == user.selected_course_id)
+            )
+        ).scalars().first()
         ctx["selected_course"] = crs.name if crs else None
 
     return ctx
 
 
-def build_system_prompt(student_ctx: dict, advisor_context: str = "general") -> str:
-    name     = student_ctx.get("student_name",   "Student")
-    level    = student_ctx.get("class_level",     "Unknown")
-    stage    = student_ctx.get("journey_stage",   "onboarding")
-    interests= student_ctx.get("career_interests","Not specified")
+def build_system_prompt(student_ctx: dict, advisor_context: str = "admission") -> str:
+    name = student_ctx.get("student_name", "Student")
+    level = student_ctx.get("class_level", "Unknown")
+    stage = student_ctx.get("journey_stage", "onboarding")
+    interests = student_ctx.get("career_interests", "Not specified")
 
     waec_lines = "\n".join(
         f"  • {w['subject']}: {w['grade']} ({w['pct']}%)"
@@ -152,14 +173,14 @@ def build_system_prompt(student_ctx: dict, advisor_context: str = "general") -> 
     jamb_info = (
         f"Best score: {student_ctx.get('jamb_best')} "
         f"({'passed' if student_ctx.get('jamb_passed') else 'not passed'})"
-        if student_ctx.get("jamb_best")
+        if student_ctx.get("jamb_best") is not None
         else "Not taken yet"
     )
 
-    uni  = student_ctx.get("selected_university") or "Not selected"
-    crs  = student_ctx.get("selected_course")     or "Not selected"
+    uni = student_ctx.get("selected_university") or "Not selected"
+    crs = student_ctx.get("selected_course") or "Not selected"
 
-    return f"""You are EduGuide AI, a Nigerian university admission advisor helping {name}.
+    return f"""You are EduGuide AI, a Nigerian academic and admission advisor helping {name}.
 
 STUDENT PROFILE:
   Name: {name} | Level: {level} | Stage: {stage}
@@ -178,12 +199,41 @@ PRACTICE ANALYTICS ({student_ctx.get('practice_sessions_total', 0)} sessions, av
 
 TOP WEAK TOPICS (needs most work): {weak_topics}
 
-ADVISOR ROLE: {advisor_context}
+ADVISOR CONTEXT: {advisor_context}
 
-Use this data to give specific, personalised advice. Reference their actual scores and weak topics.
-Do not make up data — only reference what is shown above. Be encouraging but honest.
-Always align advice with Nigerian university admission requirements (JAMB, WAEC, Post-UTME).
+You mainly help with:
+- JAMB
+- WAEC / NECO / O'Level
+- Post-UTME
+- Nigerian university admission
+- subject combinations
+- cut-off marks
+- universities and courses
+- scholarships
+- exam preparation
+- student academic performance as it relates to admission
+
+Use this data to give specific, personalised advice.
+Reference the student's real scores, weak topics, selected course, and university when available.
+Do not make up data.
+Be encouraging but honest.
+Return answers in plain text only.
+Do not use Markdown.
+Do not use headings like ###.
+Do not use bullets like *, -, or numbered markdown lists.
+Do not use bold markers like **.
+Write in short, clean paragraphs or simple plain sentences.
+
+Conversation behavior rules:
+- If the user sends a simple greeting like "hi", "hello", or "good morning", respond warmly and briefly using the student's name when available.
+- If the user sends light conversational messages such as "thanks" or "okay", respond naturally and briefly.
+- If the user sends a short follow-up reply such as "yes", "no", "okay", "go on", "why", "how", "which one", or "tell me more", treat it as a continuation of the current conversation when the previous messages were about admission or academics.
+- Do not treat short follow-up replies as out-of-scope merely because they do not contain admission keywords.
+- Only refuse when the user is asking for something genuinely outside the advisor's academic or admission scope.
+- For truly out-of-scope requests, reply exactly:
+"I can only help with JAMB, WAEC, NECO, Post-UTME, university admission, courses, scholarships, and exam preparation."
+- For in-scope questions, always end your answer with exactly one short follow-up question.
+- The follow-up question must be directly related to the user's last message, not random.
+- When possible, tailor the follow-up question to the student's course, university, score, weak topics, or current admission stage.
+- Do not ask more than one follow-up question at the end.
 """
-
-
-

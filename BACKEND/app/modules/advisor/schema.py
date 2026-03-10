@@ -1,13 +1,18 @@
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 
 
-class ChatRequest(BaseModel):
-    message:  str
-    context:  Optional[str] = "general"   
-    conversation_id: Optional[int] = None 
+# class ChatRequest(BaseModel):
+#     message:  str
+#     context:  Optional[str] = "admission"   
+#     conversation_id: Optional[int] = None 
 
+
+class ChatRequest(BaseModel):
+    message: str
+    context: Optional[Literal["admission", "career", "exam_prep", "performance"]] = "admission"
+    conversation_id: Optional[int] = None
 
 class ChatResponse(BaseModel):
     conversation_id: int
