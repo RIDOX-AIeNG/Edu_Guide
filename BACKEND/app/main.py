@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
@@ -14,6 +16,7 @@ from app.modules.admission_guide.router import router as admission_guide_router
 from app.modules.admin.router       import router as admin_router
 from app.modules.admission_guide.router import router as admission_guide_router
 from app.modules.scholarships.router import router as scholarships_router
+from app.modules.scholarships.task import refresh_scholarships_job
 
 
 
@@ -22,6 +25,24 @@ from slowapi.errors import RateLimitExceeded
 
 #app.state.limiter = limiter
 #app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
+
+scheduler = AsyncIOScheduler()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Daily scholarship refresh at 2:00 AM server time
+    scheduler.add_job(
+        refresh_scholarships_job,
+        "cron",
+        hour=2,
+        minute=0,
+        id="daily_scholarship_refresh",
+        replace_existing=True,
+    )
+    scheduler.start()
+    yield
+    scheduler.shutdown()
+
 
 
 app = FastAPI(
@@ -32,6 +53,7 @@ app = FastAPI(
         "Unified AI Advisor accessible at every stage."
     ),
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -51,10 +73,13 @@ app.include_router(advisor_router,      prefix=f"{settings.API_V1_STR}/advisor",
 app.include_router(dashboard_router,    prefix=f"{settings.API_V1_STR}/student",       tags=["Student Dashboard"])
 app.include_router(admin_router,        prefix=f"{settings.API_V1_STR}/admin",         tags=["Admin"])
 app.include_router(admission_guide_router, prefix=f"{settings.API_V1_STR}/admission-guide", tags=["Admission Guide"])
-app.include_router(admission_guide_router, prefix=f"{settings.API_V1_STR}/admission-guide", tags=["Admission Guide"])
-app.include_router(practice_router, prefix=f"{settings.API_V1_STR}/practice", tags=["Practice"])
 app.include_router(scholarships_router, prefix=f"{settings.API_V1_STR}/scholarships",  tags=["Scholarships"])
 
+
+
+@app.get("/")
+def root():
+    return {"message": "EduGuide API running"}
 
 @app.get("/health", tags=["Health"])
 def health_check():
@@ -64,12 +89,23 @@ def health_check():
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
-    schema = get_openapi(title="EduGuide API", version="1.0.0", routes=app.routes)
+    schema = get_openapi(
+        title="EduGuide API",
+        version="1.0.0",
+        routes=app.routes,
+    )
+
     schema.setdefault("components", {}).setdefault("securitySchemes", {})["BearerAuth"] = {
-        "type": "http", "scheme": "bearer", "bearerFormat": "JWT",
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
     }
+
+    schema["security"] = [{"BearerAuth": []}]
+
     app.openapi_schema = schema
     return app.openapi_schema
+
 
 app.openapi = custom_openapi
 
