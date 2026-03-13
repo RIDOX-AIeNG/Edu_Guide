@@ -33,3 +33,13 @@ class ScholarshipResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+class ScholarshipAlertResponse(BaseModel):
+    id: int
+    user_id: int
+    scholarship_id: int
+    is_read: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

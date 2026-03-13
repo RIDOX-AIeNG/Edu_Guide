@@ -53,6 +53,7 @@ print("  ✓ advisor")
 
 try:
     from app.modules.scholarships.models import Scholarship
+    from app.modules.scholarships.alert_models import ScholarshipAlert
     print("  ✓ scholarships")
 except ImportError:
     print("  ⚠  scholarships module not found — skipping")

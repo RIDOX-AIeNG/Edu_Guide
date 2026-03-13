@@ -12,6 +12,7 @@ from app.modules.advisor.model import AdvisorConversation, AdvisorMessage, Caree
 from app.modules.advisor.schema import ChatResponse, CareerAssessmentResponse
 from app.modules.advisor.context_builder import build_student_context, build_system_prompt
 from app.modules.advisor.ai_client import call_ai
+from app.modules.scholarships.service import ScholarshipService
 
 
 logger = logging.getLogger(__name__)
@@ -464,6 +465,21 @@ class AdvisorService:
                 student_ctx=student_ctx,
                 title="Conversation",
             )
+        if self._is_scholarship_request(message):
+            scholarship_response = await self._build_scholarship_guidance_response(
+                user_id=user_id,
+                student_ctx=student_ctx,
+            )
+
+            return await self._save_and_return_response(
+                conv=conv,
+                message=message,
+                response_text=scholarship_response,
+                student_ctx=student_ctx,
+                title="Scholarships",
+            )
+
+
 
         # IMPORTANT: handle short follow-up replies BEFORE scope check and BEFORE AI call
         if normalized_message in self.SHORT_FOLLOW_UP_MESSAGES and history:
@@ -804,3 +820,194 @@ Respond ONLY in this JSON format (no markdown, no extra text):
         ).scalars().all()
 
         return [{"role": m.role, "content": m.content} for m in reversed(messages)]
+    
+
+    def _is_scholarship_request(self, message: str) -> bool:
+        text = self._normalize_text(message)
+        scholarship_terms = {
+            "scholarship",
+            "scholarships",
+            "funding",
+            "bursary",
+            "grant",
+            "grants",
+            "sponsorship",
+            "financial aid",
+        }
+        return any(term in text for term in scholarship_terms)
+
+    def _format_scholarship_response(self, scholarships: list, student_ctx: dict) -> str:
+        first_name = self._extract_first_name(student_ctx.get("student_name"))
+
+        if not scholarships:
+            return (
+                f"{first_name}, I could not find any active scholarships that strongly match your "
+                f"profile right now. Would you like me to show you broader scholarship options for Nigerian students?"
+            )
+
+        intro = (
+            f"{first_name}, here are some scholarships you may want to consider based on your profile:"
+        )
+
+        lines = [intro, ""]
+
+        for idx, s in enumerate(scholarships[:5], start=1):
+            deadline_text = f" Deadline: {s.deadline}." if getattr(s, "deadline", None) else ""
+            provider_text = f"{s.provider}" if getattr(s, "provider", None) else "Unknown provider"
+            amount_text = f" Amount: {s.amount}." if getattr(s, "amount", None) else ""
+            lines.append(
+                f"{idx}. {s.title} by {provider_text}.{amount_text}{deadline_text} Apply here: {s.apply_url}"
+            )
+
+        lines.append("")
+        lines.append("Would you like me to narrow these down to undergraduate, postgraduate, or course-specific scholarships?")
+
+        return "\n".join(lines)
+    
+
+
+    async def _build_scholarship_guidance_response(self, user_id: int, student_ctx: dict) -> str:
+        from app.modules.scholarships.service import ScholarshipService
+
+        sch_service = ScholarshipService(self.db)
+
+        scholarships = await sch_service.get_recommended_scholarships_for_user(
+            user_id=user_id,
+            limit=5,
+        )
+
+        first_name = self._extract_first_name(student_ctx.get("student_name"))
+
+        if not scholarships:
+            return (
+                f"{first_name}, I could not find any active scholarships strongly matching your profile right now. "
+                f"Would you like me to show you broader scholarship options for Nigerian students?"
+            )
+
+        # Filter scholarships to reduce obvious mismatches
+        filtered = []
+        interest = (student_ctx.get("career_interests") or "").lower()
+
+        for s in scholarships:
+            text = f"{s.title} {s.description} {s.eligibility}".lower()
+
+            if interest and interest not in text:
+                # allow general and undergraduate scholarships, but drop clearer mismatches
+                if s.category not in {"general", "undergraduate"}:
+                    continue
+
+            filtered.append(s)
+
+        scholarships = filtered[:3]
+
+        prompt_lines = [
+            "You are EduGuide AI, speaking DIRECTLY to the student.",
+            "Always address the student as 'you', never by name in the third person.",
+            "Do NOT say things like 'Samson should' or 'this aligns with Samson's interest'.",
+            "Instead say things like 'This may fit you because...' and 'You should prepare...'.",
+            "Use ONLY the student profile and match reasons provided.",
+            "Do NOT invent academic programs, courses, interests, or scores.",
+            "If a scholarship is not a strong current match, clearly say it may be more relevant in the future.",
+            "Do not mention any subject, course, or career unless it is explicitly present in the student profile or scholarship data.",
+            "",
+            "Write in second person throughout.",
+            "",
+            "Format each scholarship exactly like this:",
+            "Scholarship Name",
+            "Why it may fit you",
+            "What you should prepare",
+            "Caution",
+            "",
+            "Student profile:",
+            f"Name: {student_ctx.get('student_name')}",
+            f"Journey stage: {student_ctx.get('journey_stage')}",
+            f"JAMB score: {student_ctx.get('jamb_best')}",
+            f"Career interests: {student_ctx.get('career_interests')}",
+            f"Selected course: {student_ctx.get('selected_course')}",
+            f"Weak topics: {student_ctx.get('top_weak_topics')}",
+            "Student goal: gain university admission",
+            "",
+            "Scholarships:",
+        ]
+
+        for idx, s in enumerate(scholarships, start=1):
+            reasons = sch_service._build_match_reason(s, student_ctx)
+
+            prompt_lines.append(
+                f"{idx}. Title: {s.title}\n"
+                f"Provider: {s.provider}\n"
+                f"Match reasons: {', '.join(reasons)}\n"
+                f"Description: {s.description}\n"
+                f"Eligibility: {s.eligibility}\n"
+                f"Deadline: {s.deadline}\n"
+                f"Amount: {s.amount}\n"
+                f"URL: {s.apply_url}"
+            )
+
+        prompt_lines.append("")
+        prompt_lines.append(
+            "If the scholarship category does not match the student's stage "
+            "(for example postgraduate scholarships while the student is preparing for admission), "
+            "explain that it may be a future opportunity."
+        )
+        prompt_lines.append("")
+        prompt_lines.append("End with one short follow-up question addressed directly to the student.")
+
+        guidance_prompt = "\n".join(prompt_lines)
+
+        try:
+            guidance = await call_ai(
+                system_prompt=(
+                    "You are EduGuide AI. Return plain text only. "
+                    "Speak directly to the student using 'you'. "
+                    "Never refer to the student in the third person. "
+                    "Do not invent student information."
+                ),
+                messages=[{"role": "user", "content": guidance_prompt}],
+                max_tokens=700,
+            )
+
+            guidance = guidance.strip()
+
+            # Backup cleanup in case the model still slips into third person
+            student_name = (student_ctx.get("student_name") or "").strip()
+            if student_name:
+                first_name_only = student_name.split()[0]
+
+                replacements = {
+                    f"{student_name} should": "You should",
+                    f"{first_name_only} should": "You should",
+                    f"{student_name}'s": "your",
+                    f"{first_name_only}'s": "your",
+                    f"{student_name} is": "you are",
+                    f"{first_name_only} is": "you are",
+                    f"{student_name} may": "you may",
+                    f"{first_name_only} may": "you may",
+                    f"{student_name} can": "you can",
+                    f"{first_name_only} can": "you can",
+                    f"{student_name} needs": "you need",
+                    f"{first_name_only} needs": "you need",
+                    f"{student_name} will": "you will",
+                    f"{first_name_only} will": "you will",
+                }
+
+                for old, new in replacements.items():
+                    guidance = guidance.replace(old, new)
+
+            return guidance.strip()
+
+        except Exception:
+            lines = [f"{first_name}, here are scholarships that may be relevant for you:", ""]
+
+            for idx, s in enumerate(scholarships, start=1):
+                lines.append(
+                    f"{idx}. {s.title} by {s.provider}. "
+                    f"Deadline: {s.deadline}. "
+                    f"Amount: {s.amount}. "
+                    f"Apply here: {s.apply_url}"
+                )
+
+            lines.append("")
+            lines.append("Would you like me to explain which of these may be the best match for you?")
+
+            return "\n".join(lines)

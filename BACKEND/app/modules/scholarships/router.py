@@ -1,4 +1,3 @@
-
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +8,10 @@ from app.core.database  import get_db
 from app.core.config    import settings
 from app.modules.scholarships.models  import Scholarship
 from app.modules.scholarships.schemas import ScholarshipCreate, ScholarshipResponse
+from app.modules.scholarships.service import ScholarshipService
+from app.modules.scholarships.schemas import ScholarshipAlertResponse
+from app.core.dependencies import get_current_student
+from app.modules.scholarships.alert_models import ScholarshipAlert
 
 router = APIRouter()
 
@@ -24,6 +27,74 @@ async def list_scholarships(
     q = q.order_by(Scholarship.is_urgent.desc(), Scholarship.deadline.asc())
     rows = (await db.execute(q)).scalars().all()
     return rows
+
+
+@router.get("/banner", response_model=List[ScholarshipResponse])
+async def get_banner_scholarships(
+    user=Depends(get_current_student),
+    db: AsyncSession = Depends(get_db),
+):
+    return await ScholarshipService(db).get_banner_scholarships_for_user(
+        user_id=user.id
+    )
+
+@router.get("/recommended", response_model=List[ScholarshipResponse])
+async def get_recommended_scholarships(
+    limit: int = 10,
+    user=Depends(get_current_student),
+    db: AsyncSession = Depends(get_db),
+):
+    return await ScholarshipService(db).get_recommended_scholarships_for_user(
+        user_id=user.id,
+        limit=limit,
+    )
+
+
+@router.get("/alerts", response_model=List[ScholarshipAlertResponse])
+async def get_scholarship_alerts(
+    user=Depends(get_current_student),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(ScholarshipAlert)
+        .where(ScholarshipAlert.user_id == user.id)
+        .order_by(ScholarshipAlert.created_at.desc())
+    )
+    return result.scalars().all()
+
+
+@router.post("/alerts/{alert_id}/read")
+async def mark_scholarship_alert_read(
+    alert_id: int,
+    user=Depends(get_current_student),
+    db: AsyncSession = Depends(get_db),
+):
+    alert = (
+        await db.execute(
+            select(ScholarshipAlert).where(
+                ScholarshipAlert.id == alert_id,
+                ScholarshipAlert.user_id == user.id,
+            )
+        )
+    ).scalars().first()
+
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+
+    alert.is_read = True
+    await db.commit()
+    return {"message": "Alert marked as read"}
+
+@router.post("/refresh")
+async def refresh_scholarships(
+    db: AsyncSession = Depends(get_db),
+    x_admin_key: Optional[str] = Header(None, alias="x-admin-key"),
+):
+    if not x_admin_key or x_admin_key != settings.ADMIN_SEED_KEY:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    return await ScholarshipService(db).refresh_scholarships_with_openai()
+
 
 
 

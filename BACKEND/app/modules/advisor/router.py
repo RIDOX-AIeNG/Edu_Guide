@@ -126,83 +126,83 @@ async def chat(
         conversation_id=payload.conversation_id,
     )
 
-@router.post("/analyze/{attempt_id}", response_model=ChatResponse)
-async def analyze_performance(
-    attempt_id: int,
-    user=Depends(get_current_student),
-    db:  AsyncSession = Depends(get_db),
-):
-    """
-    AI analyses a specific exam attempt.
-    Returns: score interpretation + targeted improvement plan.
-    Used after WAEC/JAMB/POST-UTME submission.
-    """
-    return await AdvisorService(db).analyze_performance(user.id, attempt_id)
+# @router.post("/analyze/{attempt_id}", response_model=ChatResponse)
+# async def analyze_performance(
+#     attempt_id: int,
+#     user=Depends(get_current_student),
+#     db:  AsyncSession = Depends(get_db),
+# ):
+#     """
+#     AI analyses a specific exam attempt.
+#     Returns: score interpretation + targeted improvement plan.
+#     Used after WAEC/JAMB/POST-UTME submission.
+#     """
+#     return await AdvisorService(db).analyze_performance(user.id, attempt_id)
 
 
-@router.get("/history", response_model=List[ConversationListResponse])
-async def conversation_history(
-    user=Depends(get_current_student),
-    db:  AsyncSession = Depends(get_db),
-):
-    """List all conversations for the current user."""
-    return await AdvisorService(db).list_conversations(user.id)
+# @router.get("/history", response_model=List[ConversationListResponse])
+# async def conversation_history(
+#     user=Depends(get_current_student),
+#     db:  AsyncSession = Depends(get_db),
+# ):
+#     """List all conversations for the current user."""
+#     return await AdvisorService(db).list_conversations(user.id)
 
 
-@router.get("/history/{conversation_id}", response_model=ConversationDetailResponse)
-async def get_conversation(
-    conversation_id: int,
-    user=Depends(get_current_student),
-    db:  AsyncSession = Depends(get_db),
-):
-    """Get all messages in a specific conversation."""
-    conv = await AdvisorService(db).get_conversation(user.id, conversation_id)
-    return conv
+# @router.get("/history/{conversation_id}", response_model=ConversationDetailResponse)
+# async def get_conversation(
+#     conversation_id: int,
+#     user=Depends(get_current_student),
+#     db:  AsyncSession = Depends(get_db),
+# ):
+#     """Get all messages in a specific conversation."""
+#     conv = await AdvisorService(db).get_conversation(user.id, conversation_id)
+#     return conv
 
 
-@router.delete("/history/{conversation_id}", status_code=200)
-async def delete_conversation(
-    conversation_id: int,
-    user=Depends(get_current_student),
-    db:  AsyncSession = Depends(get_db),
-):
-    """Soft-delete a conversation."""
-    await AdvisorService(db).delete_conversation(user.id, conversation_id)
-    return {"message": "Conversation deleted"}
+# @router.delete("/history/{conversation_id}", status_code=200)
+# async def delete_conversation(
+#     conversation_id: int,
+#     user=Depends(get_current_student),
+#     db:  AsyncSession = Depends(get_db),
+# ):
+#     """Soft-delete a conversation."""
+#     await AdvisorService(db).delete_conversation(user.id, conversation_id)
+#     return {"message": "Conversation deleted"}
 
 
-@router.post("/career-assessment", response_model=CareerAssessmentResponse)
-async def submit_career_assessment(
-    payload: CareerAssessmentRequest,
-    user=Depends(get_current_student),
-    db:  AsyncSession = Depends(get_db),
-):
-    """
-    Submit the 50-response career survey.
-    AI processes responses and returns:
-    - Recommended career paths
-    - University course recommendations
-    - Required WAEC & JAMB subjects
-    - Personalised summary
+# @router.post("/career-assessment", response_model=CareerAssessmentResponse)
+# async def submit_career_assessment(
+#     payload: CareerAssessmentRequest,
+#     user=Depends(get_current_student),
+#     db:  AsyncSession = Depends(get_db),
+# ):
+#     """
+#     Submit the 50-response career survey.
+#     AI processes responses and returns:
+#     - Recommended career paths
+#     - University course recommendations
+#     - Required WAEC & JAMB subjects
+#     - Personalised summary
 
-    Payload format:
-    {
-      "responses": [
-        {"study_hours": 3, "math_interest": 8, "science_interest": 9, ...},
-        ... (up to 50 response objects)
-      ]
-    }
-    """
-    return await AdvisorService(db).submit_career_assessment(
-        user.id, payload.responses
-    )
+#     Payload format:
+#     {
+#       "responses": [
+#         {"study_hours": 3, "math_interest": 8, "science_interest": 9, ...},
+#         ... (up to 50 response objects)
+#       ]
+#     }
+#     """
+#     return await AdvisorService(db).submit_career_assessment(
+#         user.id, payload.responses
+#     )
 
 
-@router.get("/career-assessment", response_model=Optional[CareerAssessmentResponse])
-async def get_career_assessment(
-    user=Depends(get_current_student),
-    db:  AsyncSession = Depends(get_db),
-):
-    """Get the student's existing career assessment result (if any)."""
-    return await AdvisorService(db).get_career_assessment(user.id)
+# @router.get("/career-assessment", response_model=Optional[CareerAssessmentResponse])
+# async def get_career_assessment(
+#     user=Depends(get_current_student),
+#     db:  AsyncSession = Depends(get_db),
+# ):
+#     """Get the student's existing career assessment result (if any)."""
+#     return await AdvisorService(db).get_career_assessment(user.id)
 
